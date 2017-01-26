@@ -383,7 +383,9 @@ class VirtualPrinter(object):
 		return True
 
 	def _gcode_M115(self, data):
-		output = "FIRMWARE_NAME:{} PROTOCOL_VERSION:1.0".format(self._firmwareName)
+		output = settings().get(["devel", "virtualPrinter", "customM115"])
+		if not output:
+			output = "FIRMWARE_NAME:{} PROTOCOL_VERSION:1.0".format(self._firmwareName)
 		self._send(output)
 
 	def _gcode_M117(self, data):
@@ -541,6 +543,14 @@ class VirtualPrinter(object):
 			self._debug_drop_connection = True
 		elif data == "maxtemp_error":
 			self._output("Error: MAXTEMP triggered!")
+		elif data == "maxtemp_error0":
+			self._output("Error:0\n: Extruder switched off. MAXTEMP triggered !")
+		elif data == "maxtemp_error1":
+			self._output("Error:1\n: Extruder switched off. MAXTEMP triggered !")
+		elif data == "mintemp_error0":
+			self._output("Error:0\n: Extruder switched off. MINTEMP triggered !")
+		elif data == "mintemp_error1":
+			self._output("Error:1\n: Extruder switched off. MINTEMP triggered !")
 		elif data == "go_awol":
 			self._output("// Going AWOL")
 			self._debug_awol = True

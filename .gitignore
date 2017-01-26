@@ -37,3 +37,7 @@ venv33
 venv34
 venv35
 venv36
+/src/octoprint/.vs/config/applicationhost.config
+*.suo
+/src/octoprint/octoprint.pyproj
+/src/octoprint/octoprint.sln
