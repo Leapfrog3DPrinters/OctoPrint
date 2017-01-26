@@ -103,7 +103,7 @@ default_settings = {
 		"maxWritePasses": 5,
 		"additionalPorts": [],
 		"additionalBaudrates": [],
-		"longRunningCommands": ["G4", "G28", "G29", "G30", "G32", "M400", "M226"],
+		"longRunningCommands": ["G4", "G28", "G29", "G30", "G32", "M400", "M226", "M600"],
 		"checksumRequiringCommands": ["M110"],
 		"helloCommand": "M110 N0",
 		"disconnectOnErrors": True,
@@ -118,6 +118,7 @@ default_settings = {
 		"host": "0.0.0.0",
 		"port": 5000,
 		"firstRun": True,
+		"startOnceInSafeMode": False,
 		"seenWizards": {},
 		"secretKey": None,
 		"reverseProxy": {
@@ -166,7 +167,8 @@ default_settings = {
 			"type": "off",
 			"options": {},
 			"postRoll": 0,
-			"fps": 25
+			"fps": 25,
+			"capturePostRoll": True
 		},
 		"cleanTmpAfterDays": 7
 	},
@@ -176,7 +178,9 @@ default_settings = {
 		"sizeThreshold": 20 * 1024 * 1024, # 20MB
 	},
 	"gcodeAnalysis": {
-		"maxExtruders": 10
+		"maxExtruders": 10,
+		"throttle_normalprio": 0.01,
+		"throttle_highprio": 0.0
 	},
 	"feature": {
 		"temperatureGraph": True,
@@ -197,7 +201,9 @@ default_settings = {
 		"ignoreIdenticalResends": False,
 		"identicalResendsCountdown": 7,
 		"supportFAsCommand": False,
-		"modelSizeDetection": True
+		"modelSizeDetection": True,
+		"firmwareDetection": True,
+		"printCancelConfirmation": True
 	},
 	"folder": {
 		"uploads": None,
@@ -289,8 +295,9 @@ default_settings = {
 		"apps": {}
 	},
 	"terminalFilters": [
-		{ "name": "Suppress M105 requests/responses", "regex": "(Send: M105)|(Recv: ok (B|T\d*):)" },
-		{ "name": "Suppress M27 requests/responses", "regex": "(Send: M27)|(Recv: SD printing byte)" }
+		{ "name": "Suppress temperature messages", "regex": "(Send: (N\d+\s+)?M105)|(Recv: ok (B|T\d*):)" },
+		{ "name": "Suppress SD status messages", "regex": "(Send: (N\d+\s+)?M27)|(Recv: SD printing byte)" },
+		{ "name": "Suppress wait responses", "regex": "Recv: wait"}
 	],
 	"plugins": {
 		"_disabled": []
@@ -332,12 +339,6 @@ default_settings = {
 			"numExtruders": 1,
 			"includeCurrentToolInTemps": True,
 			"includeFilenameInOpened": True,
-			"movementSpeed": {
-				"x": 6000,
-				"y": 6000,
-				"z": 200,
-				"e": 300
-			},
 			"hasBed": True,
 			"repetierStyleTargetTemperature": False,
 			"repetierStyleResends": False,
@@ -354,7 +355,8 @@ default_settings = {
 			"supportM112": True,
 			"echoOnM117": True,
 			"brokenM29": True,
-			"supportF": False
+			"supportF": False,
+			"firmwareName": "Virtual Marlin 1.0"
 		}
 	}
 }
@@ -835,12 +837,17 @@ class Settings(object):
 			self._migrate_config(config)
 		return config
 
-	def add_overlay(self, overlay):
-		self._map.maps.insert(1, overlay)
+	def add_overlay(self, overlay, at_end=False):
+		if at_end:
+			pos = len(self._map.maps) - 1
+			self._map.maps.insert(pos, overlay)
+		else:
+			self._map.maps.insert(1, overlay)
 
-	def _migrate_config(self, config=None):
+	def _migrate_config(self, config=None, persist=False):
 		if config is None:
 			config = self._config
+			persist = True
 
 		dirty = False
 
@@ -848,12 +855,14 @@ class Settings(object):
 			self._migrate_event_config,
 			self._migrate_reverse_proxy_config,
 			self._migrate_printer_parameters,
-			self._migrate_gcode_scripts
+			self._migrate_gcode_scripts,
+			self._migrate_core_system_commands
 		)
 
 		for migrate in migrators:
 			dirty = migrate(config) or dirty
-		if dirty:
+
+		if dirty and persist:
 			self.save(force=True)
 
 	def _migrate_gcode_scripts(self, config):
@@ -1062,6 +1071,67 @@ class Settings(object):
 		else:
 			return False
 
+	def _migrate_core_system_commands(self, config):
+		"""
+		Migrates system commands for restart, reboot and shutdown as defined on OctoPi or
+		according to the official setup guide to new core system commands to remove
+		duplication.
+
+		If server commands for action is not yet set, migrates command. Otherwise only
+		deletes definition from custom system commands.
+		"""
+		changed = False
+
+		migration_map = dict(shutdown="systemShutdownCommand",
+		                     reboot="systemRestartCommand",
+		                     restart="serverRestartCommand")
+
+		if "system" in config and "actions" in config["system"]:
+			actions = config["system"]["actions"]
+			to_delete = []
+			for index, spec in enumerate(actions):
+				action = spec.get("action")
+				command = spec.get("command")
+				if action is None or command is None:
+					continue
+
+				migrate_to = migration_map.get(action)
+				if migrate_to is not None:
+					if not "server" in config or not "commands" in config["server"] or not migrate_to in config["server"]["commands"]:
+						if not "server" in config:
+							config["server"] = dict()
+						if not "commands" in config["server"]:
+							config["server"]["commands"] = dict()
+						config["server"]["commands"][migrate_to] = command
+						self._logger.info("Migrated {} action to server.commands.{}".format(action, migrate_to))
+
+					to_delete.append(index)
+					self._logger.info("Deleting {} action from configured system commands, superseeded by server.commands.{}".format(action, migrate_to))
+
+			for index in reversed(to_delete):
+				actions.pop(index)
+				changed = True
+
+		if changed:
+			# let's make a backup of our current config, in case someone wants to roll back to an
+			# earlier version and needs to recover the former system commands for that
+			backup_path = self.backup("system_command_migration")
+			self._logger.info("Made a copy of the current config at {} to allow recovery of manual system command configuration".format(backup_path))
+
+		return changed
+
+	def backup(self, suffix, path=None):
+		import shutil
+
+		if path is None:
+			path = os.path.dirname(self._configfile)
+		basename = os.path.basename(self._configfile)
+		name, ext = os.path.splitext(basename)
+
+		backup = os.path.join(path, "{}.{}{}".format(name, suffix, ext))
+		shutil.copy(self._configfile, backup)
+		return backup
+
 	def save(self, force=False):
 		if not self._dirty and not force:
 			return False
@@ -1105,12 +1175,14 @@ class Settings(object):
 		else:
 			chain = self._map
 
+		if preprocessors is None:
+			preprocessors = self._get_preprocessors
+
 		preprocessor = None
-		if preprocessors is not None:
-			try:
-				preprocessor = self._get_by_path(path, preprocessors)
-			except NoSuchSettingsPath:
-				pass
+		try:
+			preprocessor = self._get_by_path(path, preprocessors)
+		except NoSuchSettingsPath:
+			pass
 
 		parent_path = path[:-1]
 		last = path[-1]
@@ -1310,15 +1382,17 @@ class Settings(object):
 		else:
 			chain = self._map
 
-		preprocessor = None
-		if preprocessors is not None:
-			try:
-				preprocessor = self._get_by_path(path, preprocessors)
-			except NoSuchSettingsPath:
-				pass
+		if preprocessors is None:
+			preprocessors = self._set_preprocessors
 
-			if callable(preprocessor):
-				value = preprocessor(value)
+		preprocessor = None
+		try:
+			preprocessor = self._get_by_path(path, preprocessors)
+		except NoSuchSettingsPath:
+			pass
+
+		if callable(preprocessor):
+			value = preprocessor(value)
 
 		try:
 			current = chain.get_by_path(path)
@@ -1416,12 +1490,8 @@ class Settings(object):
 def _default_basedir(applicationName):
 	# taken from http://stackoverflow.com/questions/1084697/how-do-i-store-desktop-application-data-in-a-cross-platform-way-for-python
 	if sys.platform == "darwin":
-		from AppKit import NSSearchPathForDirectoriesInDomains
-		# http://developer.apple.com/DOCUMENTATION/Cocoa/Reference/Foundation/Miscellaneous/Foundation_Functions/Reference/reference.html#//apple_ref/c/func/NSSearchPathForDirectoriesInDomains
-		# NSApplicationSupportDirectory = 14
-		# NSUserDomainMask = 1
-		# True for expanding the tilde into a fully qualified path
-		return os.path.join(NSSearchPathForDirectoriesInDomains(14, 1, True)[0], applicationName)
+		import appdirs
+		return appdirs.user_data_dir(applicationName, "")
 	elif sys.platform == "win32":
 		return os.path.join(os.environ["APPDATA"], applicationName)
 	else:

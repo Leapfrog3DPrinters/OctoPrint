@@ -402,13 +402,10 @@ $(function() {
             if (!file) {
                 return;
             }
-            OctoPrint.files.select(file.origin, file.path)
-                .done(function() {
-                    var withinPrintDimensions = self.evaluatePrintDimensions(file, true);
-                    if (withinPrintDimensions && printAfterLoad) {
-                        OctoPrint.job.start();
-                    }
-                });
+            var withinPrintDimensions = self.evaluatePrintDimensions(file, true);
+            var print = printAfterLoad && withinPrintDimensions;
+
+            OctoPrint.files.select(file.origin, file.path, print);
         };
 
         self.removeFile = function(file, event) {
@@ -444,20 +441,6 @@ $(function() {
         };
 
         self._removeEntry = function(entry, event) {
-            var index = self.listHelper.paginatedItems().indexOf(entry) + 1;
-            if (index >= self.listHelper.paginatedItems().length) {
-                index = index - 2;
-            }
-            if (index < 0) {
-                index = 0;
-            }
-
-            var focus = undefined;
-            var fileToFocus = self.listHelper.paginatedItems()[index];
-            if (fileToFocus) {
-                focus = {location: fileToFocus.origin, path: fileToFocus.path};
-            }
-
             self.activeRemovals.push(entry.origin + ":" + entry.path);
             var finishActiveRemoval = function() {
                 self.activeRemovals(_.filter(self.activeRemovals(), function(e) {
@@ -488,10 +471,7 @@ $(function() {
             var deferred = $.Deferred();
             OctoPrint.files.delete(entry.origin, entry.path)
                 .done(function() {
-                    self.requestData({
-                        focus: focus,
-                        switchToPath: (entry.parent ? entry.parent.path : "")
-                    })
+                    self.requestData()
                         .done(function() {
                             deferred.resolve();
                         })
@@ -647,19 +627,31 @@ $(function() {
             }
 
             // set print volume boundaries
-            var boundaries = {
-                minX : 0,
-                maxX : volumeInfo.width(),
-                minY : 0,
-                maxY : volumeInfo.depth(),
-                minZ : 0,
-                maxZ : volumeInfo.height()
-            };
-            if (volumeInfo.origin() == "center") {
-                boundaries["maxX"] = volumeInfo.width() / 2;
-                boundaries["minX"] = -1 * boundaries["maxX"];
-                boundaries["maxY"] = volumeInfo.depth() / 2;
-                boundaries["minY"] = -1 * boundaries["maxY"];
+            var boundaries;
+            if (_.isPlainObject(volumeInfo.custom_box)) {
+                boundaries = {
+                    minX : volumeInfo.custom_box.x_min(),
+                    minY : volumeInfo.custom_box.y_min(),
+                    minZ : volumeInfo.custom_box.z_min(),
+                    maxX : volumeInfo.custom_box.x_max(),
+                    maxY : volumeInfo.custom_box.y_max(),
+                    maxZ : volumeInfo.custom_box.z_max()
+                }
+            } else {
+                boundaries = {
+                    minX : 0,
+                    maxX : volumeInfo.width(),
+                    minY : 0,
+                    maxY : volumeInfo.depth(),
+                    minZ : 0,
+                    maxZ : volumeInfo.height()
+                };
+                if (volumeInfo.origin() == "center") {
+                    boundaries["maxX"] = volumeInfo.width() / 2;
+                    boundaries["minX"] = -1 * boundaries["maxX"];
+                    boundaries["maxY"] = volumeInfo.depth() / 2;
+                    boundaries["minY"] = -1 * boundaries["maxY"];
+                }
             }
 
             // model not within bounds, we need to prepare a warning
@@ -716,11 +708,12 @@ $(function() {
                         return false;
                     }
 
-                    if (entry["type"] == "folder" && entry["children"]) {
+                    var success = entry["name"].toLocaleLowerCase().indexOf(query) > -1;
+                    if (!success && entry["type"] == "folder" && entry["children"]) {
                         return _.any(entry["children"], recursiveSearch);
-                    } else {
-                        return entry["name"].toLocaleLowerCase().indexOf(query) > -1;
                     }
+
+                    return success;
                 };
 
                 self.listHelper.changeSearchFunction(recursiveSearch);
