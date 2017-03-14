@@ -168,7 +168,6 @@ default_settings = {
 			"options": {},
 			"postRoll": 0,
 			"fps": 25,
-			"capturePostRoll": True
 		},
 		"cleanTmpAfterDays": 7
 	},
@@ -180,7 +179,8 @@ default_settings = {
 	"gcodeAnalysis": {
 		"maxExtruders": 10,
 		"throttle_normalprio": 0.01,
-		"throttle_highprio": 0.0
+		"throttle_highprio": 0.0,
+		"throttle_lines": 100
 	},
 	"feature": {
 		"temperatureGraph": True,
@@ -203,7 +203,8 @@ default_settings = {
 		"supportFAsCommand": False,
 		"modelSizeDetection": True,
 		"firmwareDetection": True,
-		"printCancelConfirmation": True
+		"printCancelConfirmation": True,
+		"blockWhileDwelling": False
 	},
 	"folder": {
 		"uploads": None,
@@ -243,7 +244,7 @@ default_settings = {
 		"showFahrenheitAlso": False,
 		"components": {
 			"order": {
-				"navbar": ["settings", "systemmenu", "login", "plugin_announcements"],
+				"navbar": ["settings", "systemmenu", "plugin_announcements", "login"],
 				"sidebar": ["connection", "state", "files"],
 				"tab": ["temperature", "control", "gcodeviewer", "terminal", "timelapse"],
 				"settings": [
@@ -335,7 +336,6 @@ default_settings = {
 			"enabled": False,
 			"okAfterResend": False,
 			"forceChecksum": False,
-			"okWithLinenumber": False,
 			"numExtruders": 1,
 			"includeCurrentToolInTemps": True,
 			"includeFilenameInOpened": True,
@@ -356,7 +356,12 @@ default_settings = {
 			"echoOnM117": True,
 			"brokenM29": True,
 			"supportF": False,
-			"firmwareName": "Virtual Marlin 1.0"
+			"firmwareName": "Virtual Marlin 1.0",
+			"sharedNozzle": False,
+			"sendBusy": False,
+			"simulateReset": True,
+			"preparedOks": [],
+			"okFormatString": "ok"
 		}
 	}
 }
@@ -1396,13 +1401,18 @@ class Settings(object):
 
 		try:
 			current = chain.get_by_path(path)
+		except KeyError:
+			current = None
+
+		try:
 			default_value = chain.get_by_path(path, only_defaults=True)
-			in_local = chain.has_path(path, only_local=True)
-			in_defaults = chain.has_path(path, only_defaults=True)
 		except KeyError:
 			if error_on_path:
 				raise NoSuchSettingsPath()
-			return
+			default_value = None
+
+		in_local = chain.has_path(path, only_local=True)
+		in_defaults = chain.has_path(path, only_defaults=True)
 
 		if not force and in_defaults and in_local and default_value == value:
 			try:
