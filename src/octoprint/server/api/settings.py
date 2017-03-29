@@ -15,7 +15,7 @@ from octoprint.events import eventManager, Events
 from octoprint.settings import settings, valid_boolean_trues
 
 from octoprint.server import admin_permission, printer
-from octoprint.server.api import api
+from octoprint.server.api import api, NO_CONTENT
 from octoprint.server.util.flask import restricted_access, with_revalidation_checking
 
 import octoprint.plugin
@@ -83,7 +83,7 @@ def getSettings():
 	data = {
 		"api": {
 			"enabled": s.getBoolean(["api", "enabled"]),
-			"key": s.get(["api", "key"]) if admin_permission.can() else "n/a",
+			"key": s.get(["api", "key"]) if admin_permission.can() else None,
 			"allowCrossOrigin": s.get(["api", "allowCrossOrigin"])
 		},
 		"appearance": {
@@ -126,7 +126,8 @@ def getSettings():
 			"ignoreIdenticalResends": s.getBoolean(["feature", "ignoreIdenticalResends"]),
 			"modelSizeDetection": s.getBoolean(["feature", "modelSizeDetection"]),
 			"firmwareDetection": s.getBoolean(["feature", "firmwareDetection"]),
-			"printCancelConfirmation": s.getBoolean(["feature", "printCancelConfirmation"])
+			"printCancelConfirmation": s.getBoolean(["feature", "printCancelConfirmation"]),
+			"blockWhileDwelling": s.getBoolean(["feature", "blockWhileDwelling"])
 		},
 		"serial": {
 			"port": connectionOptions["portPreference"],
@@ -257,6 +258,23 @@ def setSettings():
 	_saveSettings(data)
 	return getSettings()
 
+
+@api.route("/settings/apikey", methods=["POST"])
+@restricted_access
+@admin_permission.require(403)
+def generateApiKey():
+	apikey = settings().generateApiKey()
+	return jsonify(apikey=apikey)
+
+
+@api.route("/settings/apikey", methods=["DELETE"])
+@restricted_access
+@admin_permission.require(403)
+def deleteApiKey():
+	settings().deleteApiKey()
+	return NO_CONTENT
+
+
 def _saveSettings(data):
 	logger = logging.getLogger(__name__)
 
@@ -267,7 +285,6 @@ def _saveSettings(data):
 
 	if "api" in data.keys():
 		if "enabled" in data["api"].keys(): s.setBoolean(["api", "enabled"], data["api"]["enabled"])
-		if "key" in data["api"].keys(): s.set(["api", "key"], data["api"]["key"], True)
 		if "allowCrossOrigin" in data["api"].keys(): s.setBoolean(["api", "allowCrossOrigin"], data["api"]["allowCrossOrigin"])
 
 	if "appearance" in data.keys():
@@ -311,6 +328,7 @@ def _saveSettings(data):
 		if "modelSizeDetection" in data["feature"]: s.setBoolean(["feature", "modelSizeDetection"], data["feature"]["modelSizeDetection"])
 		if "firmwareDetection" in data["feature"]: s.setBoolean(["feature", "firmwareDetection"], data["feature"]["firmwareDetection"])
 		if "printCancelConfirmation" in data["feature"]: s.setBoolean(["feature", "printCancelConfirmation"], data["feature"]["printCancelConfirmation"])
+		if "blockWhileDwelling" in data["feature"]: s.setBoolean(["feature", "blockWhileDwelling"], data["feature"]["blockWhileDwelling"])
 
 	if "serial" in data.keys():
 		if "autoconnect" in data["serial"].keys(): s.setBoolean(["serial", "autoconnect"], data["serial"]["autoconnect"])

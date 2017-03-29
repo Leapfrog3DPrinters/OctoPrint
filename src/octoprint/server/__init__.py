@@ -66,6 +66,8 @@ import octoprint.util
 import octoprint.filemanager.storage
 import octoprint.filemanager.analysis
 import octoprint.slicing
+from octoprint.server.util import enforceApiKeyRequestHandler, loginFromApiKeyRequestHandler, corsRequestHandler, \
+	corsResponseHandler
 from octoprint.server.util.flask import PreemptiveCache
 
 from . import util
@@ -263,7 +265,7 @@ class Server(object):
 
 			return dict(settings=plugin_settings)
 
-		def settings_plugin_config_migration_and_cleanup(name, implementation):
+		def settings_plugin_config_migration_and_cleanup(identifier, implementation):
 			"""Take care of migrating and cleaning up any old settings"""
 
 			if not isinstance(implementation, octoprint.plugin.SettingsPlugin):
@@ -276,7 +278,7 @@ class Server(object):
 				stored_version = implementation._settings.get_int([octoprint.plugin.SettingsPlugin.config_version_key])
 				if stored_version is None or stored_version < settings_version:
 					settings_migrator(settings_version, stored_version)
-					implementation._settings.set_int([octoprint.plugin.SettingsPlugin.config_version_key], settings_version)
+					implementation._settings.set_int([octoprint.plugin.SettingsPlugin.config_version_key], settings_version, force=True)
 
 			implementation.on_settings_cleanup()
 			implementation._settings.save()
@@ -365,9 +367,14 @@ class Server(object):
 			as_attachment=True,
 			allow_client_caching=False
 		)
+
 		additional_mime_types=dict(mime_type_guesser=mime_type_guesser)
+
 		admin_validator = dict(access_validation=util.tornado.access_validation_factory(app, loginManager, util.flask.admin_validator))
-		no_hidden_files_validator = dict(path_validation=util.tornado.path_validation_factory(lambda path: not octoprint.util.is_hidden_path(path), status_code=404))
+		user_validator = dict(access_validation=util.tornado.access_validation_factory(app, loginManager, util.flask.user_validator))
+
+		no_hidden_files_validator = dict(path_validation=util.tornado.path_validation_factory(lambda path: not octoprint.util.is_hidden_path(path),
+		                                                                                      status_code=404))
 
 		def joined_dict(*dicts):
 			if not len(dicts):
@@ -392,9 +399,9 @@ class Server(object):
 			                                                                            download_handler_kwargs,
 			                                                                            admin_validator)),
 			# camera snapshot
-			(r"/downloads/camera/current", util.tornado.UrlProxyHandler, dict(url=self._settings.get(["webcam", "snapshot"]),
-			                                                                  as_attachment=True,
-			                                                                  access_validation=util.tornado.access_validation_factory(app, loginManager, util.flask.user_validator))),
+			(r"/downloads/camera/current", util.tornado.UrlProxyHandler, joined_dict(dict(url=self._settings.get(["webcam", "snapshot"]),
+			                                                                              as_attachment=True),
+			                                                                         user_validator)),
 			# generated webassets
 			(r"/static/webassets/(.*)", util.tornado.LargeResponseHandler, dict(path=os.path.join(self._settings.getBaseFolder("generated"), "webassets"))),
 
@@ -894,8 +901,13 @@ class Server(object):
 			return
 
 		if plugin.is_blueprint_protected():
-			from octoprint.server.util import apiKeyRequestHandler, corsResponseHandler
-			blueprint.before_request(apiKeyRequestHandler)
+			blueprint.before_request(corsRequestHandler)
+			blueprint.before_request(enforceApiKeyRequestHandler)
+			blueprint.before_request(loginFromApiKeyRequestHandler)
+			blueprint.after_request(corsResponseHandler)
+		else:
+			blueprint.before_request(corsRequestHandler)
+			blueprint.before_request(loginFromApiKeyRequestHandler)
 			blueprint.after_request(corsResponseHandler)
 
 		url_prefix = "/plugin/{name}".format(name=name)
@@ -1137,12 +1149,12 @@ class Server(object):
 		if len(css_core) == 0:
 			css_core_bundle = Bundle(*[])
 		else:
-			css_core_bundle = Bundle(*css_app, output="webassets/packed_core.css", filters="cssrewrite")
+			css_core_bundle = Bundle(*css_core, output="webassets/packed_core.css", filters="cssrewrite")
 
 		if len(css_plugins) == 0:
 			css_plugins_bundle = Bundle(*[])
 		else:
-			css_plugins_bundle = Bundle(*css_app, output="webassets/packed_plugins.css", filters="cssrewrite")
+			css_plugins_bundle = Bundle(*css_plugins, output="webassets/packed_plugins.css", filters="cssrewrite")
 
 		if len(css_app) == 0:
 			css_app_bundle = Bundle(*[])
@@ -1153,12 +1165,12 @@ class Server(object):
 		if len(less_core) == 0:
 			less_core_bundle = Bundle(*[])
 		else:
-			less_core_bundle = Bundle(*less_app, output="webassets/packed_core.less", filters="cssrewrite, less_importrewrite")
+			less_core_bundle = Bundle(*less_core, output="webassets/packed_core.less", filters="cssrewrite, less_importrewrite")
 
 		if len(less_plugins) == 0:
 			less_plugins_bundle = Bundle(*[])
 		else:
-			less_plugins_bundle = Bundle(*less_app, output="webassets/packed_plugins.less", filters="cssrewrite, less_importrewrite")
+			less_plugins_bundle = Bundle(*less_plugins, output="webassets/packed_plugins.less", filters="cssrewrite, less_importrewrite")
 
 		if len(less_app) == 0:
 			less_app_bundle = Bundle(*[])
