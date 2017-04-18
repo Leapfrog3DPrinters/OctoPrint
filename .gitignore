@@ -41,3 +41,4 @@ venv36
 /src/octoprint/.vs/octoprint/v14/.suo
 /src/octoprint/octoprint.pyproj
 /src/octoprint/octoprint.sln
+*.suo

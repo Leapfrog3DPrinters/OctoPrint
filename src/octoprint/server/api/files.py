@@ -170,10 +170,14 @@ def _getFileList(origin, path=None, filter=None, recursive=False):
 
 		with _file_cache_mutex:
 			files, lastmodified = _file_cache.get("{}:{}:{}:{}".format(origin, path, recursive, filter), ([], None))
-			if lastmodified is None or lastmodified < fileManager.last_modified(origin, path=path, recursive=recursive):
+			lm = fileManager.last_modified(origin, path=path, recursive=recursive)
+			if lastmodified is None or lastmodified < lm:
+				logging.getLogger(__name__).debug("Cache entry expired. File: {0} Cache: {1}".format(lastmodified, lm))
 				files = fileManager.list_files(origin, path=path, filter=filter_func, recursive=recursive)[origin].values()
 				lastmodified = fileManager.last_modified(origin, path=path, recursive=recursive)
 				_file_cache["{}:{}:{}:{}".format(origin, path, recursive, filter)] = (files, lastmodified)
+			else:
+				logging.getLogger(__name__).debug("Cache entry not expired. File: {0} Cache: {1}".format(lastmodified, lm))
 
 		def analyse_recursively(files, path=None):
 			if path is None:
