@@ -8,8 +8,6 @@ __copyright__ = "Copyright (C) 2014 The OctoPrint Project - Released under terms
 import requests
 import logging
 
-from ..exceptions import ConfigurationInvalid
-
 RELEASE_URL = "https://api.github.com/repos/{user}/{repo}/releases"
 
 logger = logging.getLogger("octoprint.plugins.softwareupdate.version_checks.github_release")
@@ -152,6 +150,10 @@ def _get_comparable_version_pkg_resources(version_string, force_base=True):
 
 	version = pkg_resources.parse_version(version_string)
 
+	# A leading v is common in github release tags and old setuptools doesn't remove it.
+	if version and isinstance(version, tuple) and version[0].lower() == "*v":
+		version = version[1:]
+
 	if force_base:
 		if isinstance(version, tuple):
 			# old setuptools
@@ -207,18 +209,20 @@ def _is_current(release_information, compare_type, custom=None, force_base=True)
 
 	Tests:
 
-	    >>> _is_current(dict(remote=dict(value=None))
+	    >>> _is_current(dict(remote=dict(value=None)), "python")
 	    True
-	    >>> _is_current(dict(local=dict(value="1.2.15"), remote=dict(value="1.2.16")))
+	    >>> _is_current(dict(local=dict(value="1.2.15"), remote=dict(value="1.2.16")), "python")
 	    False
-	    >>> _is_current(dict(local=dict(value="1.2.16dev1"), remote=dict(value="1.2.16dev2")))
+	    >>> _is_current(dict(local=dict(value="1.2.16dev1"), remote=dict(value="1.2.16dev2")), "python")
 	    True
-	    >>> _is_current(dict(local=dict(value="1.2.16dev1"), remote=dict(value="1.2.16dev2")), force_base=False)
+	    >>> _is_current(dict(local=dict(value="1.2.16dev1"), remote=dict(value="1.2.16dev2")), "python", force_base=False)
 	    False
-	    >>> _is_current(dict(local=dict(value="1.2.16dev3"), remote=dict(value="1.2.16dev2")), force_base=False)
+	    >>> _is_current(dict(local=dict(value="1.2.16dev3"), remote=dict(value="1.2.16dev2")), "python", force_base=False)
 	    True
-	    >>> _is_current(dict(local=dict(value="1.2.16dev3"), remote=dict(value="1.2.16dev2")), force_base=False, compare_type="python_unequal")
+	    >>> _is_current(dict(local=dict(value="1.2.16dev3"), remote=dict(value="1.2.16dev2")), "python_unequal", force_base=False)
 	    False
+	    >>> _is_current(dict(local=dict(value="1.3.0.post1+g1014712"), remote=dict(value="1.3.0")), "python")
+	    True
 
 	"""
 
@@ -241,6 +245,8 @@ def _is_current(release_information, compare_type, custom=None, force_base=True)
 
 
 def get_latest(target, check, custom_compare=None):
+	from ..exceptions import ConfigurationInvalid
+
 	if not "user" in check or not "repo" in check:
 		raise ConfigurationInvalid("github_release update configuration for %s needs user and repo set" % target)
 
