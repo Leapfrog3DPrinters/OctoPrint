@@ -228,11 +228,11 @@ class PositionRecord(object):
 
 	def as_dict(self):
 		return dict(x=self.x,
-					y=self.y,
-					z=self.z,
-					e=self.e,
-					t=self.t,
-					f=self.f)
+		            y=self.y,
+		            z=self.z,
+		            e=self.e,
+		            t=self.t,
+		            f=self.f)
 
 class MachineCom(object):
 	STATE_NONE = 0
@@ -435,6 +435,10 @@ class MachineCom(object):
 		self._state = newState
 		self._log('Changing monitoring state from \'%s\' to \'%s\'' % (oldState, self.getStateString()))
 		self._callback.on_comm_state_change(newState)
+
+	def _dual_log(self, message, level=logging.ERROR):
+		self._logger.log(level, message)
+		self._log(message)
 
 	def _log(self, message):
 		self._terminal_log.append(message)
@@ -1151,7 +1155,7 @@ class MachineCom(object):
 					# a response to an M105 or an M114
 					self._handle_ok()
 					needs_further_handling = "T:" in line or "T0:" in line or "B:" in line or "C:" in line or \
-					                         "X:" in line or "FIRMWARE_NAME:" in line
+					                         "X:" in line or "NAME:" in line
 					handled = (line == "wait" or line == "ok" or not needs_further_handling)
 
 				# process resends
@@ -1177,6 +1181,7 @@ class MachineCom(object):
 						# there's no way to query it from the firmware and
 						# no way to track it ourselves when not streaming
 						# the file - this all sucks sooo much
+						self.last_position.valid = True
 						self.last_position.x = float(match.group("x"))
 						self.last_position.y = float(match.group("y"))
 						self.last_position.z = float(match.group("z"))
@@ -1238,13 +1243,29 @@ class MachineCom(object):
 							pass
 
 				##~~ firmware name & version
-				elif "FIRMWARE_NAME:" in line:
+				elif "NAME:" in line:
 					# looks like a response to M115
 					data = parse_firmware_line(line)
 					firmware_name = data.get("FIRMWARE_NAME")
-					self._logger.info("Printer reports firmware name \"{}\"".format(firmware_name))
+
+					if firmware_name is None:
+						# Malyan's "Marlin compatible firmware" isn't actually Marlin compatible and doesn't even
+						# report its firmware name properly in response to M115. Wonderful - why stick to established
+						# protocol when you can do your own thing, right?
+						#
+						# Example: NAME: Malyan VER: 2.9 MODEL: M200 HW: HA02
+						#
+						# We do a bit of manual fiddling around here to circumvent that issue and get ourselves a
+						# reliable firmware name (NAME + VER) out of the Malyan M115 response.
+						name = data.get("NAME")
+						ver = data.get("VER")
+						if "malyan" in name.lower() and ver:
+							firmware_name = name.strip() + " " + ver.strip()
 
 					if not self._firmwareInfoReceived and firmware_name:
+						firmware_name = firmware_name.strip()
+						self._logger.info("Printer reports firmware name \"{}\"".format(firmware_name))
+
 						if "repetier" in firmware_name.lower():
 							self._logger.info("Detected Repetier firmware, enabling relevant features for issue free communication")
 
@@ -1262,6 +1283,16 @@ class MachineCom(object):
 						elif "reprapfirmware" in firmware_name.lower():
 							self._logger.info("Detected RepRapFirmware, enabling relevant features for issue free communication")
 							self._sdRelativePath = True
+
+						elif "malyan" in firmware_name.lower():
+							self._logger.info("Detected Malyan firmware, enabling relevant features for issue free communication")
+
+							self._alwaysSendChecksum = True
+
+							sd_always_available = self._sdAlwaysAvailable
+							self._sdAlwaysAvailable = True
+							if not sd_always_available and not self._sdAvailable:
+								self.initSdCard()
 
 						self._firmwareInfoReceived = True
 
@@ -1794,10 +1825,13 @@ class MachineCom(object):
 
 		try:
 			ret = self._serial.readline()
-		except:
+		except Exception as ex:
 			if not self._connection_closing:
 				self._logger.exception("Unexpected error while reading from serial port")
 				self._log("Unexpected error while reading serial port, please consult octoprint.log for details: %s" % (get_exception_string()))
+				if isinstance(ex, serial.SerialException):
+					self._dual_log("Please see https://bit.ly/octoserial for possible reasons of this.",
+					               level=logging.ERROR)
 				self._errorValue = get_exception_string()
 				self.close(is_error=True)
 			return None
@@ -2130,7 +2164,7 @@ class MachineCom(object):
 		self._log("Closing down send loop")
 
 	def _process_command_phase(self, phase, command, command_type=None, gcode=None):
-		if self.isStreaming() or phase not in ("queuing", "queued", "sending", "sent"):
+		if (self.isStreaming() and self.isPrinting()) or phase not in ("queuing", "queued", "sending", "sent"):
 			return command, command_type, gcode
 
 		if gcode is None:
@@ -2238,17 +2272,23 @@ class MachineCom(object):
 						written += len(cmd)
 					else:
 						written += result
-				except:
+				except Exception as ex:
 					if not self._connection_closing:
 						self._logger.exception("Unexpected error while writing to serial port")
 						self._log("Unexpected error while writing to serial port: %s" % (get_exception_string()))
+						if isinstance(ex, serial.SerialException):
+							self._dual_log("Please see https://bit.ly/octoserial for possible reasons of this.",
+							               level=logging.ERROR)
 						self._errorValue = get_exception_string()
 						self.close(is_error=True)
 					break
-			except:
+			except Exception as ex:
 				if not self._connection_closing:
 					self._logger.exception("Unexpected error while writing to serial port")
 					self._log("Unexpected error while writing to serial port: %s" % (get_exception_string()))
+					if isinstance(ex, serial.SerialException):
+						self._dual_log("Please see https://bit.ly/octoserial for possible reasons of this.",
+						               level=logging.ERROR)
 					self._errorValue = get_exception_string()
 					self.close(is_error=True)
 				break
@@ -2259,8 +2299,7 @@ class MachineCom(object):
 				if passes > self._max_write_passes:
 					# nothing written in max consecutive passes, we give up
 					message = "Could not write anything to the serial port in {} tries, something appears to be wrong with the printer communication".format(self._max_write_passes)
-					self._logger.error(message)
-					self._log(message)
+					self._dual_log(message, level=logging.ERROR)
 					self._errorValue = "Could not write to serial port"
 					self.close(is_error=True)
 					break
@@ -2394,17 +2433,17 @@ class MachineCom(object):
 		self._heating = True
 
 	def _gcode_M110_sending(self, cmd, cmd_type=None):
-		newLineNumber = None
+		newLineNumber = 0
 		match = regexes_parameters["intN"].search(cmd)
 		if match:
 			try:
 				newLineNumber = int(match.group("value"))
 			except:
 				pass
-		else:
-			newLineNumber = 0
 
 		with self._line_mutex:
+			self._logger.info("M110 detected, setting current line number to {}".format(newLineNumber))
+
 			# send M110 command with new line number
 			self._currentLine = newLineNumber
 

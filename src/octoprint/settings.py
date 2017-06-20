@@ -155,6 +155,7 @@ default_settings = {
 	},
 	"webcam": {
 		"stream": None,
+		"streamRatio": "16:9",
 		"snapshot": None,
 		"ffmpeg": None,
 		"ffmpegThreads": 1,
@@ -204,7 +205,8 @@ default_settings = {
 		"modelSizeDetection": True,
 		"firmwareDetection": True,
 		"printCancelConfirmation": True,
-		"blockWhileDwelling": False
+		"blockWhileDwelling": False,
+		"g90InfluencesExtruder": False
 	},
 	"folder": {
 		"uploads": None,
@@ -229,8 +231,7 @@ default_settings = {
 		"cutoff": 30
 	},
 	"printerProfiles": {
-		"default": None,
-		"defaultProfile": {}
+		"default": None
 	},
 	"printerParameters": {
 		"pauseTriggers": [],
@@ -328,7 +329,6 @@ default_settings = {
 			"preemptive": True
 		},
 		"webassets": {
-			"minify": False,
 			"bundle": True,
 			"clean_on_startup": True
 		},
@@ -361,7 +361,8 @@ default_settings = {
 			"sendBusy": False,
 			"simulateReset": True,
 			"preparedOks": [],
-			"okFormatString": "ok"
+			"okFormatString": "ok",
+			"m115FormatString": "FIRMWARE_NAME: {firmware_name} PROTOCOL_VERSION:1.0"
 		}
 	}
 }
@@ -556,7 +557,8 @@ class Settings(object):
 			self._configfile = os.path.join(self._basedir, "config.yaml")
 		self.load(migrate=True)
 
-		if self.get(["api", "key"]) is None:
+		apikey = self.get(["api", "key"])
+		if not apikey or apikey == "n/a":
 			self.generateApiKey()
 
 		self._script_env = self._init_script_templating()

@@ -444,6 +444,18 @@ $(function() {
             }
         };
 
+        $.fn.lazyload = function() {
+            return this.each(function() {
+                if (this.tagName.toLowerCase() != "img") return;
+
+                var src = this.getAttribute("data-src");
+                if (src) {
+                    this.setAttribute("src", src);
+                    this.removeAttribute("data-src");
+                }
+            });
+        };
+
         // Use bootstrap tabdrop for tabs and pills
         $('.nav-pills, .nav-tabs').tabdrop();
 
@@ -481,6 +493,17 @@ $(function() {
 
         // reload overlay
         $("#reloadui_overlay_reload").click(function() { location.reload(); });
+
+        var changeTab = function()
+        {
+            var hashtag = window.location.hash;
+            var tab = $('#tabs a[href="' + hashtag + '"]');
+            if (tab.length)
+            {
+                tab.tab("show");
+                onTabChange(hashtag);
+            }
+        }
 
         //~~ view model binding
 
@@ -569,6 +592,15 @@ $(function() {
                 log.debug("Browser tab is now " + (status ? "visible" : "hidden"));
                 callViewModels(allViewModels, "onBrowserTabVisibilityChange", [status]);
             });
+
+            $(window).on("hashchange", function() {
+                changeTab();
+            });
+
+            if (window.location.hash != "")
+            {
+                changeTab();
+            }
 
             log.info("Application startup complete");
         };
